@@ -592,48 +592,77 @@ then
     check_command phpenmod -v ALL smbclient
 fi
 
-# Enable igbinary for PHP
-# https://github.com/igbinary/igbinary
-if is_this_installed "php$PHPVER"-dev
+# Install and Configure PHP igbinary Automatically if Not Installed
+
+# Check if igbinary is installed
+if php -m | grep -q igbinary
 then
-    echo "Installing igbinary PHP module..."
-    if ! pecl install -Z igbinary
+    echo "igbinary PHP module is already installed and loaded."
+else
+    echo "igbinary PHP module is not installed. Proceeding with automatic installation."
+
+    # Install necessary dependencies
+    sudo apt update && sudo apt install -y php-dev php-pear build-essential
+
+    # Install igbinary using PECL
+    if sudo pecl install igbinary
     then
-        msg_box "igbinary PHP module installation failed. Please ensure PHP version compatibility or install manually."
-        exit
+        echo "igbinary PHP module installed successfully via PECL."
     else
-        print_text_in_color "$IGreen" "igbinary PHP module installation OK!"
+        echo "igbinary installation via PECL failed. Exiting."
+        exit 1
     fi
 
+    # Enable the module
+    PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
+    echo "extension=igbinary.so" | sudo tee /etc/php/$PHP_VERSION/mods-available/igbinary.ini
+    sudo phpenmod igbinary
+
+    # Restart the web server
+    sudo systemctl restart php$PHP_VERSION-fpm
+
+    # Verify the installation
+    if php -m | grep -q igbinary
+    then
+        echo "igbinary PHP module installed and loaded successfully."
+    else
+        echo "igbinary PHP module installation failed. Verify manually."
+        exit 1
+    fi
+fi
+
+# Update PHP configuration
 {
 echo "# igbinary for PHP"
 echo "session.serialize_handler=igbinary"
 echo "igbinary.compact_strings=On"
 } >> "$PHP_INI"
 
-    if [ ! -f "$PHP_MODS_DIR"/igbinary.ini ]
-    then
-        touch "$PHP_MODS_DIR"/igbinary.ini
-    fi
-
-    if ! grep -qFx extension=igbinary.so "$PHP_MODS_DIR"/igbinary.ini
-    then
-        echo "# PECL igbinary" > "$PHP_MODS_DIR"/igbinary.ini
-        echo "extension=igbinary.so" >> "$PHP_MODS_DIR"/igbinary.ini
-        check_command phpenmod -v ALL igbinary
-    fi
-    restart_webserver
-
-    if php -m | grep -q igbinary
-    then
-        print_text_in_color "$IGreen" "igbinary module successfully loaded!"
-    else
-        msg_box "igbinary module failed to load. Verify installation or retry manually."
-    fi
-else
-    msg_box "PHP development package (php$PHPVER-dev) is not installed. Install it before proceeding."
-    exit
+# Ensure igbinary is enabled in the PHP modules directory
+if [ ! -f "$PHP_MODS_DIR"/igbinary.ini ]
+then
+    touch "$PHP_MODS_DIR"/igbinary.ini
 fi
+
+if ! grep -qFx extension=igbinary.so "$PHP_MODS_DIR"/igbinary.ini
+then
+    echo "# PECL igbinary" > "$PHP_MODS_DIR"/igbinary.ini
+    echo "extension=igbinary.so" >> "$PHP_MODS_DIR"/igbinary.ini
+    check_command phpenmod -v ALL igbinary
+fi
+
+# Restart the web server to apply changes
+restart_webserver
+
+# Verify that igbinary is loaded
+if php -m | grep -q igbinary
+then
+    echo "igbinary PHP module is successfully configured."
+else
+    echo "Failed to load igbinary module. Verify the installation and try again."
+    exit 1
+fi
+
 
 # Prepare cron.php to be run every 5 minutes
 crontab -u www-data -l | { cat; echo "*/5  *  *  *  * php -f $NCPATH/cron.php > /dev/null 2>&1"; } | crontab -u www-data -
